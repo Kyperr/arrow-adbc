@@ -60,6 +60,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 public class FlightSqlConnection implements AdbcConnection {
   private final BufferAllocator allocator;
   private final AtomicInteger counter = new AtomicInteger(0);
+  private final FlightSqlClient rawSqlClient;
   private final FlightSqlClientWithCallOptions client;
   private final SqlQuirks quirks;
   private final Map<String, Object> parameters;
@@ -86,6 +87,7 @@ public class FlightSqlConnection implements AdbcConnection {
     this.parameters = parameters;
     this.callOptions = new CallOption[0];
     FlightSqlClient flightSqlClient = new FlightSqlClient(createInitialConnection(location));
+    this.rawSqlClient = flightSqlClient;
     this.client = new FlightSqlClientWithCallOptions(flightSqlClient, callOptions);
     this.clientCache =
         Caffeine.newBuilder()
@@ -205,7 +207,15 @@ public class FlightSqlConnection implements AdbcConnection {
 
   @Override
   public void close() throws AdbcException {
+
+    try {
+      rawSqlClient.closeSession(new CloseSessionRequest(), callOptions);
+    } finally {
+      throw AdbcException.internal("[Flight SQL] Failed to close session").withCause(e);
+    }
+
     clientCache.invalidateAll();
+
     try {
       AutoCloseables.close(client, allocator);
     } catch (Exception e) {
