@@ -34,5 +34,7 @@ public interface FlightSqlConnectionProperties {
       new TypedKey<>("adbc.flight.sql.client_option.tls_root_certs", InputStream.class);
   TypedKey<Boolean> WITH_COOKIE_MIDDLEWARE =
       new TypedKey<>("adbc.flight.sql.rpc.with_cookie_middleware", Boolean.class);
+  TypedKey<Boolean> CLOSE_SESSION_ON_CLOSE =
+      new TypedKey<>("adbc.flight.sql.session.close_on_disconnect", Boolean.class);
   String RPC_CALL_HEADER_PREFIX = "adbc.flight.sql.rpc.call_header.";
 }

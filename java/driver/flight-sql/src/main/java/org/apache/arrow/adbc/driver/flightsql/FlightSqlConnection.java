@@ -28,6 +28,7 @@ import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -40,6 +41,7 @@ import org.apache.arrow.adbc.core.AdbcStatusCode;
 import org.apache.arrow.adbc.core.BulkIngestMode;
 import org.apache.arrow.adbc.sql.SqlQuirks;
 import org.apache.arrow.flight.CallOption;
+import org.apache.arrow.flight.CloseSessionRequest;
 import org.apache.arrow.flight.FlightCallHeaders;
 import org.apache.arrow.flight.FlightClient;
 import org.apache.arrow.flight.FlightEndpoint;
@@ -58,9 +60,9 @@ import org.checkerframework.checker.initialization.qual.UnknownInitialization;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class FlightSqlConnection implements AdbcConnection {
+
   private final BufferAllocator allocator;
   private final AtomicInteger counter = new AtomicInteger(0);
-  private final FlightSqlClient rawSqlClient;
   private final FlightSqlClientWithCallOptions client;
   private final SqlQuirks quirks;
   private final Map<String, Object> parameters;
@@ -69,6 +71,7 @@ public class FlightSqlConnection implements AdbcConnection {
   // Cached data to use across additional connections.
   private ClientCookieMiddleware.@Nullable Factory cookieMiddlewareFactory;
   private CallOption[] callOptions;
+  private boolean closeSessionOnClose;
 
   // Used to cache the InputStream content as a byte array since
   // subsequent connections may need to use it but it is supplied as a stream.
@@ -87,7 +90,6 @@ public class FlightSqlConnection implements AdbcConnection {
     this.parameters = parameters;
     this.callOptions = new CallOption[0];
     FlightSqlClient flightSqlClient = new FlightSqlClient(createInitialConnection(location));
-    this.rawSqlClient = flightSqlClient;
     this.client = new FlightSqlClientWithCallOptions(flightSqlClient, callOptions);
     this.clientCache =
         Caffeine.newBuilder()
@@ -207,11 +209,14 @@ public class FlightSqlConnection implements AdbcConnection {
 
   @Override
   public void close() throws AdbcException {
+    final List<AdbcException> failures = new ArrayList<>();
 
-    try {
-      rawSqlClient.closeSession(new CloseSessionRequest(), callOptions);
-    } finally {
-      throw AdbcException.internal("[Flight SQL] Failed to close session").withCause(e);
+    if (closeSessionOnClose) {
+      try {
+        client.closeSession(new CloseSessionRequest());
+      } catch (RuntimeException e) {
+        failures.add(AdbcException.internal("[Flight SQL] Failed to close session").withCause(e));
+      }
     }
 
     clientCache.invalidateAll();
@@ -219,7 +224,14 @@ public class FlightSqlConnection implements AdbcConnection {
     try {
       AutoCloseables.close(client, allocator);
     } catch (Exception e) {
-      throw AdbcException.internal("[Flight SQL] Failed to close connection").withCause(e);
+      failures.add(
+          AdbcException.internal("[Flight SQL] Failed to close connection").withCause(e));
+    }
+
+    if (!failures.isEmpty()) {
+      AdbcException primary = failures.get(0);
+      failures.subList(1, failures.size()).forEach(primary::addSuppressed);
+      throw primary;
     }
   }
 
@@ -274,6 +286,9 @@ public class FlightSqlConnection implements AdbcConnection {
       if (useCookieMiddleware) {
         this.cookieMiddlewareFactory = new ClientCookieMiddleware.Factory();
       }
+      this.closeSessionOnClose =
+          Boolean.TRUE.equals(
+              FlightSqlConnectionProperties.CLOSE_SESSION_ON_CLOSE.get(parameters));
     }
 
     // Build the client using the above properties.
@@ -326,7 +341,9 @@ public class FlightSqlConnection implements AdbcConnection {
     return client;
   }
 
-  /** Returns a yet-to-be authenticated FlightClient */
+  /**
+   * Returns a yet-to-be authenticated FlightClient
+   */
   private FlightClient buildClient(
       @UnknownInitialization FlightSqlConnection this, Location location) throws AdbcException {
     if (allocator == null) {

@@ -26,6 +26,8 @@ import java.util.List;
 import org.apache.arrow.flight.CallOption;
 import org.apache.arrow.flight.CancelFlightInfoRequest;
 import org.apache.arrow.flight.CancelFlightInfoResult;
+import org.apache.arrow.flight.CloseSessionRequest;
+import org.apache.arrow.flight.CloseSessionResult;
 import org.apache.arrow.flight.FlightDescriptor;
 import org.apache.arrow.flight.FlightEndpoint;
 import org.apache.arrow.flight.FlightInfo;
@@ -285,6 +287,10 @@ public class FlightSqlClientWithCallOptions implements AutoCloseable {
   public FlightEndpoint renewFlightEndpoint(
       RenewFlightEndpointRequest request, CallOption... options) {
     return client.renewFlightEndpoint(request, combine(options));
+  }
+
+  public CloseSessionResult closeSession(CloseSessionRequest request, CallOption... options) {
+    return client.closeSession(request, combine(options));
   }
 
   @Override
